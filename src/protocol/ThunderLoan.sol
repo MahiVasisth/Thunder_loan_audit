@@ -94,6 +94,8 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     mapping(IERC20 => AssetToken) public s_tokenToAssetToken;
 
     // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price.
+    // @audit-issue : There are different storage slot for variables in upgraded protocol. Here fee_precisison in
+    // 0th storage slot.But in upgraded protocol this will store in 1th storage slot.
     uint256 private s_feePrecision;
     uint256 private s_flashLoanFee; // 0.3% ETH fee
 
@@ -145,6 +147,8 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         s_flashLoanFee = 3e15; // 0.3% ETH fee
     }
 
+    // @audit-issue : User can use this function for increasing the balance of this contract while taking the 
+    // flash loan and after that can withdraw their tokens .
     function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) revertIfNotAllowedToken(token) {
         AssetToken assetToken = s_tokenToAssetToken[token];
         uint256 exchangeRate = assetToken.getExchangeRate();
@@ -198,7 +202,8 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         if (receiverAddress.code.length == 0) {
             revert ThunderLoan__CallerIsNotContract();
         }
-
+  // @audit-issue : in function getcalculated fee we use get_reserves which lead to oracle manipulation.
+  // so that flash loan fee can be reduced in next time.
         uint256 fee = getCalculatedFee(token, amount);
         // slither-disable-next-line reentrancy-vulnerabilities-2 reentrancy-vulnerabilities-3
         assetToken.updateExchangeRate(fee);
@@ -225,6 +230,9 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         if (endingBalance < startingBalance + fee) {
             revert ThunderLoan__NotPaidBack(startingBalance + fee, endingBalance);
         }
+        // @audit-issue : using repay inside a flash loan is not correct. Because when any
+        // user try to repay using repay function it will always check for false but s_currentlyFlashLoaning[token]
+        // is goes to set false after the flash loan assertion.
         s_currentlyFlashLoaning[token] = false;
     }
 
@@ -257,6 +265,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
 
     function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
         //slither-disable-next-line divide-before-multiply
+        // @audit-issue : here reserves are used for oracle manipulation .
         uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
         //slither-disable-next-line divide-before-multiply
         fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
